@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/rpc/jsonrpc"
 
+	"github.com/fsouza/go-dockerclient"
 	"github.com/natefinch/pie"
 )
 
@@ -22,9 +23,17 @@ func main() {
 
 type Api struct{}
 
-func (Api) Start(eventId string, response *string) error {
-	log.Printf("got call for Start with eventId %q", eventId)
+func (Api) Start(container *docker.Container, response *string) error {
+	log.Printf("got call for Start with container %#v", container)
 
-	*response = "Hi " + eventId
+	*response = "done"
 	return nil
 }
+
+func (Api) Attach(container *docker.Container, response *string) error { return nil }
+func (Api) Create(container *docker.Container, response *string) error { return nil }
+func (Api) Delete(event *docker.APIEvents, response *string) error     { return nil }
+func (Api) Destroy(event *docker.APIEvents, response *string) error    { return nil }
+func (Api) Die(container *docker.Container, response *string) error    { return nil }
+func (Api) Resize(container *docker.Container, response *string) error { return nil }
+func (Api) Untag(event *docker.APIEvents, response *string) error      { return nil }

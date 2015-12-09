@@ -31,12 +31,13 @@ plugins:
   - ./echo
 docker:
   endpoint: unix:///var/run/docker.sock
-  version: 1.9
+  version: 1.21
 `
-
 var (
-	configFile string
-	config     Config
+	config       Config
+	configFile   string
+	dockerClient *docker.Client
+	plugins      []rpc.Client
 )
 
 func init() {
@@ -45,11 +46,18 @@ func init() {
 	flag.Parse()
 
 	parseConfig()
+	dockerClient = newDockerClient()
+	plugins = createPlugins()
 }
 
-func refute(err error) {
+func refute(err error, level string) {
 	if err != nil {
-		log.Fatal("fatal: ", err)
+		switch level {
+		case "fatal":
+			log.Fatal("fatal: ", err)
+		case "warn":
+			log.Print("warn: ", err)
+		}
 	}
 }
 
@@ -58,52 +66,77 @@ func parseConfig() {
 	if configFile != "" {
 		var err error
 		toLoad, err = ioutil.ReadFile(configFile)
-		refute(err)
+		refute(err, "fatal")
 	} else {
 		toLoad = []byte(defaultConfig)
 	}
-	refute(yaml.Unmarshal(toLoad, &config))
+	refute(yaml.Unmarshal(toLoad, &config), "fatal")
 }
 
 func newDockerClient() *docker.Client {
 	client, err := docker.NewVersionedClient(config.Docker.Endpoint, config.Docker.Version)
-	refute(err)
+	refute(err, "fatal")
 	return client
-}
-
-// Decision switch for what type of events we receive from daemon
-func handleEvent(event *docker.APIEvents, plugins []rpc.Client) {
-	for _, plugin := range plugins {
-		go func() {
-			var result string
-			switch event.Status {
-			case "start":
-				refute(plugin.Call("Api.Start", event.ID, &result))
-				log.Printf("res: %v", result)
-			}
-		}()
-	}
 }
 
 func createPlugins() []rpc.Client {
 	var plugins []rpc.Client
 	for _, plugin := range config.Plugins {
 		plug, err := pie.StartProviderCodec(jsonrpc.NewClientCodec, os.Stderr, plugin)
-		refute(err)
+		refute(err, "fatal")
 		plugins = append(plugins, *plug)
 	}
 	return plugins
 }
 
+func dockerInspect(eventID string) *docker.Container {
+	inspect, err := dockerClient.InspectContainer(eventID)
+	refute(err, "warn")
+	return inspect
+}
+
+// Decision switch for what type of events we receive from daemon
+func handleEvent(event *docker.APIEvents) {
+	log.Print("event: " + event.Status)
+	for _, plugin := range plugins {
+		go func() {
+			var result string
+			var pluginError error
+			switch event.Status {
+			case "attach":
+				pluginError = plugin.Call("Api.Attach", dockerInspect(event.ID), &result)
+			case "create":
+				pluginError = plugin.Call("Api.Create", dockerInspect(event.ID), &result)
+			case "delete":
+				pluginError = plugin.Call("Api.Delete", event, &result)
+			case "destroy":
+				pluginError = plugin.Call("Api.Destroy", event, &result)
+			case "die":
+				pluginError = plugin.Call("Api.Die", dockerInspect(event.ID), &result)
+			case "resize":
+				pluginError = plugin.Call("Api.Resize", dockerInspect(event.ID), &result)
+			case "start":
+				pluginError = plugin.Call("Api.Start", dockerInspect(event.ID), &result)
+			case "untag":
+				pluginError = plugin.Call("Api.Untag", event, &result)
+			default:
+				log.Printf("unknown event: %v", event)
+			}
+			if result != "" {
+				log.Printf("result: %v", result)
+			}
+			refute(pluginError, "warn")
+		}()
+	}
+}
+
 func main() {
-	dockerClient := newDockerClient()
+	log.SetPrefix("[server log] ")
 
 	eventChannel := make(chan *docker.APIEvents)
 	dockerClient.AddEventListener(eventChannel)
 
-	plugins := createPlugins()
-
 	for {
-		handleEvent(<-eventChannel, plugins)
+		handleEvent(<-eventChannel)
 	}
 }
