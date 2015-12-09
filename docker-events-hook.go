@@ -1,9 +1,14 @@
+// Copyright 2015 YP LLC.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file
 package main
 
 import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"net/rpc"
+	"net/rpc/jsonrpc"
 	"os"
 
 	"github.com/fsouza/go-dockerclient"
@@ -13,6 +18,7 @@ import (
 
 type DockerConfig struct {
 	Endpoint string
+	Version  string
 }
 
 type Config struct {
@@ -22,27 +28,26 @@ type Config struct {
 
 var defaultConfig = `
 plugins:
-  - echo
+  - ./echo
 docker:
   endpoint: unix:///var/run/docker.sock
+  version: 1.9
 `
 
 var (
-	pluginPath = "/etc/docker-events-hook/plugins"
-	configFile = ""
+	configFile string
+	config     Config
 )
 
 func init() {
 	configFileMessage := "override default config path of " + configFile
 	flag.StringVar(&configFile, "config", configFile, configFileMessage)
-
-	pluginPathMessage := "override default plugin path of " + pluginPath
-	flag.StringVar(&pluginPath, "plugin-path", pluginPath, pluginPathMessage)
-
 	flag.Parse()
+
+	parseConfig()
 }
 
-func assert(err error) {
+func refute(err error) {
 	if err != nil {
 		log.Fatal("fatal: ", err)
 	}
@@ -53,46 +58,52 @@ func parseConfig() {
 	if configFile != "" {
 		var err error
 		toLoad, err = ioutil.ReadFile(configFile)
-		assert(err)
+		refute(err)
 	} else {
 		toLoad = []byte(defaultConfig)
 	}
-
-	config := Config{}
-	assert(yaml.Unmarshal(toLoad, &config))
-
-	log.Printf("--- config:\n%v\n\n", config)
-	log.Printf("Plugins: %v", config.Plugins)
-	log.Printf("Docker Endpoint: %v", config.Docker.Endpoint)
+	refute(yaml.Unmarshal(toLoad, &config))
 }
 
 func newDockerClient() *docker.Client {
-	client, err := docker.NewClient("unix:///var/run/docker.sock")
-	if nil != err {
-		log.Fatal(err)
-		os.Exit(1)
-	}
+	client, err := docker.NewVersionedClient(config.Docker.Endpoint, config.Docker.Version)
+	refute(err)
 	return client
 }
 
 // Decision switch for what type of events we receive from daemon
-func handleEvent(event *docker.APIEvents) {
-	switch event.Status {
-	case "start":
+func handleEvent(event *docker.APIEvents, plugins []rpc.Client) {
+	for _, plugin := range plugins {
+		go func() {
+			var result string
+			switch event.Status {
+			case "start":
+				refute(plugin.Call("Api.Start", event.ID, &result))
+				log.Printf("res: %v", result)
+			}
+		}()
 	}
 }
 
+func createPlugins() []rpc.Client {
+	var plugins []rpc.Client
+	for _, plugin := range config.Plugins {
+		plug, err := pie.StartProviderCodec(jsonrpc.NewClientCodec, os.Stderr, plugin)
+		refute(err)
+		plugins = append(plugins, *plug)
+	}
+	return plugins
+}
+
 func main() {
-	parseConfig()
-	return
 	dockerClient := newDockerClient()
-	pie.NewProvider()
 
 	eventChannel := make(chan *docker.APIEvents)
 	dockerClient.AddEventListener(eventChannel)
 
-	// Channel blocks until input.
+	plugins := createPlugins()
+
 	for {
-		handleEvent(<-eventChannel)
+		handleEvent(<-eventChannel, plugins)
 	}
 }
