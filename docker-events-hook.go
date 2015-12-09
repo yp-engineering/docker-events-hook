@@ -102,6 +102,7 @@ func handleEvent(event *docker.APIEvents) {
 		go func() {
 			var result string
 			var pluginError error
+
 			switch event.Status {
 			case "attach":
 				pluginError = plugin.Call("Api.Attach", dockerInspect(event.ID), &result)
@@ -122,9 +123,11 @@ func handleEvent(event *docker.APIEvents) {
 			default:
 				log.Printf("unknown event: %v", event)
 			}
+
 			if result != "" {
 				log.Printf("result: %v", result)
 			}
+
 			refute(pluginError, "warn")
 		}()
 	}
