@@ -23,6 +23,48 @@ func main() {
 
 type Api struct{}
 
+func (Api) Attach(container *docker.Container, response *string) error {
+	log.Printf("got call for Attach with container %#v", container)
+
+	*response = "done"
+	return nil
+}
+
+func (Api) Create(container *docker.Container, response *string) error {
+	log.Printf("got call for Create with container %#v", container)
+
+	*response = "done"
+	return nil
+}
+
+func (Api) Delete(event *docker.APIEvents, response *string) error {
+	log.Printf("got call for Delete with event %#v", event)
+
+	*response = "done"
+	return nil
+}
+
+func (Api) Destroy(event *docker.APIEvents, response *string) error {
+	log.Printf("got call for Destroy with event %#v", event)
+
+	*response = "done"
+	return nil
+}
+
+func (Api) Die(container *docker.Container, response *string) error {
+	log.Printf("got call for Die with container %#v", container)
+
+	*response = "done"
+	return nil
+}
+
+func (Api) Resize(container *docker.Container, response *string) error {
+	log.Printf("got call for Resize with container %#v", container)
+
+	*response = "done"
+	return nil
+}
+
 func (Api) Start(container *docker.Container, response *string) error {
 	log.Printf("got call for Start with container %#v", container)
 
@@ -30,10 +72,9 @@ func (Api) Start(container *docker.Container, response *string) error {
 	return nil
 }
 
-func (Api) Attach(container *docker.Container, response *string) error { return nil }
-func (Api) Create(container *docker.Container, response *string) error { return nil }
-func (Api) Delete(event *docker.APIEvents, response *string) error     { return nil }
-func (Api) Destroy(event *docker.APIEvents, response *string) error    { return nil }
-func (Api) Die(container *docker.Container, response *string) error    { return nil }
-func (Api) Resize(container *docker.Container, response *string) error { return nil }
-func (Api) Untag(event *docker.APIEvents, response *string) error      { return nil }
+func (Api) Untag(event *docker.APIEvents, response *string) error {
+	log.Printf("got call for Untag with event %#v", event)
+
+	*response = "done"
+	return nil
+}
