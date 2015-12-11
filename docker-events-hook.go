@@ -36,7 +36,7 @@ type Config struct {
 
 var defaultConfig = `
 plugins:
-  - ./echo
+  - ./examples/echo
 docker:
   endpoint: unix:///var/run/docker.sock
   version: 1.21
