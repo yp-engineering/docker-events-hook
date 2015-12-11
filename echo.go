@@ -9,6 +9,7 @@ import (
 
 	"github.com/fsouza/go-dockerclient"
 	"github.com/natefinch/pie"
+	"github.com/yp-engineering/docker-events-hook/plugin"
 )
 
 func main() {
@@ -67,6 +68,19 @@ func (Api) Resize(container *docker.Container, response *string) error {
 
 func (Api) Start(container *docker.Container, response *string) error {
 	log.Printf("got call for Start with container %#v", container)
+	rp, err := plugin.RunningPort(container)
+	if err != nil {
+		log.Printf("Error: %s", err)
+	} else {
+		log.Printf("Running port: %#v", rp)
+	}
+
+	localIP, err := plugin.LocalIPAddress()
+	if err != nil {
+		log.Printf("%#v", err)
+	} else {
+		log.Printf("IP Address: %#v", localIP)
+	}
 
 	*response = "done"
 	return nil
