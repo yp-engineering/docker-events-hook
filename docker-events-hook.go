@@ -4,16 +4,24 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io/ioutil"
-	"log"
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"os"
+	"strings"
 
 	"github.com/fsouza/go-dockerclient"
+	"github.com/golang/glog"
 	"github.com/natefinch/pie"
 	"gopkg.in/yaml.v2"
+)
+
+const (
+	_ = iota
+	verbose
+	debug
 )
 
 type DockerConfig struct {
@@ -37,12 +45,11 @@ var (
 	config       Config
 	configFile   string
 	dockerClient *docker.Client
-	plugins      []rpc.Client
+	plugins      map[*rpc.Client]string
 )
 
 func init() {
-	configFileMessage := "override default config path of " + configFile
-	flag.StringVar(&configFile, "config", configFile, configFileMessage)
+	flag.StringVar(&configFile, "config", configFile, "path to overiding config.yml file")
 	flag.Parse()
 
 	parseConfig()
@@ -50,14 +57,9 @@ func init() {
 	plugins = createPlugins()
 }
 
-func refute(err error, level string) {
+func fatal(err error) {
 	if err != nil {
-		switch level {
-		case "fatal":
-			log.Fatal("fatal: ", err)
-		case "warn":
-			log.Print("warn: ", err)
-		}
+		glog.Fatalf("fatal: %s", err)
 	}
 }
 
@@ -66,79 +68,126 @@ func parseConfig() {
 	if configFile != "" {
 		var err error
 		toLoad, err = ioutil.ReadFile(configFile)
-		refute(err, "fatal")
+		fatal(err)
 	} else {
 		toLoad = []byte(defaultConfig)
 	}
-	refute(yaml.Unmarshal(toLoad, &config), "fatal")
+
+	fatal(yaml.Unmarshal(toLoad, &config))
+
+	if glog.V(debug) {
+		glog.Infof("config: %#v", config)
+	}
 }
 
 func newDockerClient() *docker.Client {
 	client, err := docker.NewVersionedClient(config.Docker.Endpoint, config.Docker.Version)
-	refute(err, "fatal")
+	fatal(err)
+	if glog.V(debug) {
+		glog.Infof("docker client: %#v", client)
+	}
 	return client
 }
 
-func createPlugins() []rpc.Client {
-	var plugins []rpc.Client
+func createPlugins() map[*rpc.Client]string {
+	plugins = make(map[*rpc.Client]string)
 	for _, plugin := range config.Plugins {
 		plug, err := pie.StartProviderCodec(jsonrpc.NewClientCodec, os.Stderr, plugin)
-		refute(err, "fatal")
-		plugins = append(plugins, *plug)
+		fatal(err)
+		plugins[plug] = plugin
+	}
+	if glog.V(debug) {
+		glog.Infof("plugins: %#v", plugins)
 	}
 	return plugins
 }
 
-func dockerInspect(eventID string) *docker.Container {
-	inspect, err := dockerClient.InspectContainer(eventID)
-	refute(err, "warn")
-	return inspect
+func dockerInspect(event *docker.APIEvents) (*docker.Container, error) {
+	status := event.Status
+	if status == "delete" || status == "destroy" || status == "untag" {
+		// No error, just can't inspect them
+		return nil, nil
+	} else {
+		return dockerClient.InspectContainer(event.ID)
+	}
+}
+
+func marshalJson(d interface{}) []byte {
+	data, err := json.Marshal(d)
+	if err != nil {
+		glog.Errorf("couldn't marshal to JSON: %#v", data)
+		return nil
+	}
+	return data
+}
+
+func eventInfo(event *docker.APIEvents, name string, inspect *docker.Container, result string, call string) {
+	if glog.V(debug) {
+		logMessage := `{"Event":%s,"Plugin":%#v,"Container":%s,"Result":%#v,"Plugin Call":%#v}`
+		glog.Infof(logMessage, marshalJson(event), name, marshalJson(inspect), result, call)
+	} else {
+		var image string
+		if inspect == nil {
+			image = ""
+		} else {
+			image = inspect.Config.Image
+		}
+		if glog.V(verbose) {
+			logMessage := `{"Event":{"Id":%#v,"Status":%#v},"Plugin":%#v,"Container":%#v,"Result":%#v,"Plugin Call":%#v}`
+			glog.Infof(logMessage, event.ID, event.Status, name, image, result, call)
+		} else {
+			logMessage := `{"Event":{"Status":%#v},"Plugin":%#v,"Container":%#v}`
+			glog.Infof(logMessage, event.Status, name, image)
+		}
+	}
 }
 
 // Decision switch for what type of events we receive from daemon
 func handleEvent(event *docker.APIEvents) {
-	log.Print("event: " + event.Status)
-	for _, plugin := range plugins {
+	for plugin, name := range plugins {
 		go func() {
 			var result string
 			var pluginError error
 
+			inspect, err := dockerInspect(event)
+			if err != nil {
+				glog.Errorf("couldn't inspect event: %#v", event)
+				return
+			}
+
+			call := "Api." + strings.Title(event.Status)
 			switch event.Status {
 			case "attach":
-				pluginError = plugin.Call("Api.Attach", dockerInspect(event.ID), &result)
+				pluginError = plugin.Call(call, inspect, &result)
 			case "create":
-				pluginError = plugin.Call("Api.Create", dockerInspect(event.ID), &result)
+				pluginError = plugin.Call(call, inspect, &result)
 			case "delete":
-				pluginError = plugin.Call("Api.Delete", event, &result)
+				pluginError = plugin.Call(call, event, &result)
 			case "destroy":
-				pluginError = plugin.Call("Api.Destroy", event, &result)
+				pluginError = plugin.Call(call, event, &result)
 			case "die":
-				pluginError = plugin.Call("Api.Die", dockerInspect(event.ID), &result)
+				pluginError = plugin.Call(call, inspect, &result)
 			case "resize":
-				pluginError = plugin.Call("Api.Resize", dockerInspect(event.ID), &result)
+				pluginError = plugin.Call(call, inspect, &result)
 			case "start":
-				pluginError = plugin.Call("Api.Start", dockerInspect(event.ID), &result)
+				pluginError = plugin.Call(call, inspect, &result)
 			case "untag":
-				pluginError = plugin.Call("Api.Untag", event, &result)
+				pluginError = plugin.Call(call, event, &result)
 			default:
-				log.Printf("unknown event: %v", event)
+				glog.Errorf("unknown event: %v", event)
 			}
+			eventInfo(event, name, inspect, result, call)
 
-			if result != "" {
-				log.Printf("result: %v", result)
+			if pluginError != nil {
+				glog.Errorf("plugin error: %#v", pluginError)
 			}
-
-			refute(pluginError, "warn")
 		}()
 	}
 }
 
 func main() {
-	log.SetPrefix("[server log] ")
-
 	eventChannel := make(chan *docker.APIEvents)
 	dockerClient.AddEventListener(eventChannel)
-
 	for {
 		handleEvent(<-eventChannel)
 	}
