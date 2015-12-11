@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 
@@ -9,16 +10,17 @@ import (
 
 func RunningPort(info *docker.Container) (string, error) {
 	var err error
+	var port string
 	switch info.HostConfig.NetworkMode {
 	// `-p` and `-P`
 	case "default":
-		port, err := mappedTCPPort(info)
+		port, err = mappedTCPPort(info)
 		if err == nil {
 			return port, nil
 		}
 	// `--net host` obviously
 	case "host":
-		port, err := exposedTCPPort(info)
+		port, err = exposedTCPPort(info)
 		if err == nil {
 			return port, nil
 		}
