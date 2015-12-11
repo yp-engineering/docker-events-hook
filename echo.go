@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	log.SetPrefix("[plugin log] ")
+	log.SetPrefix("[echo log] ")
 
 	p := pie.NewProvider()
 	if err := p.Register(Api{}); err != nil {
