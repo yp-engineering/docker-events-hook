@@ -59,6 +59,13 @@ func (Api) Die(container *docker.Container, response *string) error {
 	return nil
 }
 
+func (Api) Kill(container *docker.Container, response *string) error {
+	log.Printf("got call for Kill with container %#v", container)
+
+	*response = "done"
+	return nil
+}
+
 func (Api) Resize(container *docker.Container, response *string) error {
 	log.Printf("got call for Resize with container %#v", container)
 

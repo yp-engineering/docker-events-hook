@@ -167,6 +167,8 @@ func handleEvent(event *docker.APIEvents) {
 				pluginError = plugin.Call(call, event, &result)
 			case "die":
 				pluginError = plugin.Call(call, inspect, &result)
+			case "kill":
+				pluginError = plugin.Call(call, inspect, &result)
 			case "resize":
 				pluginError = plugin.Call(call, inspect, &result)
 			case "start":
